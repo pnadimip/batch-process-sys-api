@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:file="http://www.mulesoft.org/schema/mule/file" xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:batch="http://www.mulesoft.org/schema/mule/batch" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd">
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="95a95783-a181-4100-a042-ccc4f15db734" >
+		<http:listener-connection host="0.0.0.0" port="8092" />
+	</http:listener-config>
+	<db:config name="Database_Config" doc:name="Database Config" doc:id="c7951edf-c11b-4dcc-a5af-881fd0976245" >
+		<db:my-sql-connection host="localhost" port="3306" user="root" password="root" database="local" />
+	</db:config>
+	<flow name="batch-process-sys-apiFlow" doc:id="9b92a8d0-af15-47d4-ad63-6d775525944f" >
+		<http:listener doc:name="Listener" doc:id="24345686-44c1-4b3d-8075-a7dc94a7638e" config-ref="HTTP_Listener_config" path="/batchProcess"/>
+		<file:read doc:name="Read" doc:id="5d90a80c-6c7f-4da8-974a-dc97ae14be01" path="C:\Users\hp\Desktop\BatchFile1.csv"/>
+		<ee:transform doc:name="Transform Message" doc:id="77c0a4a4-7571-43bc-8fa7-ae9055e1068f" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<batch:job jobName="batch-process-sys-apiBatch_Job" doc:id="94ef079f-ac22-403e-96ac-4781b32945f0" maxFailedRecords="-1">
+			<batch:process-records>
+				<batch:step name="Batch_Step" doc:id="f67cd3da-aca7-419c-a882-e3a9544f6934">
+					<ee:transform doc:name="Transform Message" doc:id="67df2902-25b5-4f12-957b-51f1c15c2e94">
+						<ee:message>
+							<ee:set-payload><![CDATA[%dw 2.0
+import * from dw::Runtime
+output application/java
+---
+{
+    "flightName": if(payload."FLIGHT NAME" == "") fail('Because empty content found') else payload."FLIGHT NAME",
+    "flightDate": payload."FLIGHT DATE",
+    "airLines": payload."AIR LINES",
+    "start": payload.START,
+    "stop": payload.STOP,
+    "fare": payload.FARE,
+    "departure": payload.DEPARTURE,
+    "arrival": payload.ARRIVAL,
+    "piletName": payload."PILET NAME",
+    "airHosterName": payload."AIR HOSTER NAME"
+}]]></ee:set-payload>
+						</ee:message>
+					</ee:transform>
+					<batch:aggregator doc:name="Batch Aggregator" doc:id="64b3695d-0989-4d4f-9a59-eded0381c99f" size="50">
+						<db:bulk-insert doc:name="Bulk insert" doc:id="9315dbf6-5b07-44f6-95e6-8aeb96f95a6c" config-ref="Database_Config">
+							<db:sql ><![CDATA[INSERT INTO VISTARAFLIGHTS(flightName,flightDate,airLines,start,stop,fare,departure,arrival,piletName,airHosterName)
+VALUES(:flightName,:flightDate,:airLines,:start,:stop,:fare,:departure,:arrival,:piletName,:airHosterName)
+]]></db:sql>
+						</db:bulk-insert>
+					</batch:aggregator>
+				</batch:step>
+				<batch:step name="Batch_Step1" doc:id="09df9a5b-0d63-49cb-8a96-d5f7e351964e" acceptPolicy="ONLY_FAILURES">
+					<batch:aggregator doc:name="Batch Aggregator" doc:id="e86e9e86-84f9-462e-a138-af7c661b928b" size="10000">
+						<file:write doc:name="Write" doc:id="c4321d17-cce6-41b6-b439-bd3cf3bacbba" path='#["C:\Users\hp\Desktop\Failure folder\failureRecords-" ++ now() ++ ",csv"]' mode="CREATE_NEW"/>
+					</batch:aggregator>
+					<ee:transform doc:name="Transform Message" doc:id="ff2d8127-5fb0-4427-bb23-70903b2c2d8e" >
+						<ee:message >
+							<ee:set-payload ><![CDATA[%dw 2.0
+output application/csv header=true, separator=","
+---
+payload]]></ee:set-payload>
+						</ee:message>
+					</ee:transform>
+				</batch:step>
+				<batch:step name="Batch_Step2" doc:id="fee44bb4-76de-4532-b792-149f29ba3eac">
+					<batch:aggregator doc:name="Batch Aggregator" doc:id="d46586e7-fce8-47de-8367-fecb7701b2bb" size="10">
+						<logger level="INFO" doc:name="Logger" doc:id="d5f5142e-ca06-456a-8abb-7d6cd15be18c" message="Success Records  #[payload]" />
+					</batch:aggregator>
+				</batch:step>
+			</batch:process-records>
+			<batch:on-complete>
+				<ee:transform doc:name="Transform Message" doc:id="ca1316fb-1bea-4f31-82c0-43e0194f3ae8">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+			</batch:on-complete>
+		</batch:job>
+	</flow>
+</mule>
